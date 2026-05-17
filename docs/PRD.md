@@ -160,6 +160,8 @@ The package includes fixtures for:
 - Docs include one persisted-history example and one live-stream example.
 - Docs include validation and replay usage.
 - Fixtures pass the lightweight event stream validator.
+- Docs include a compact `docs/AI_AGENT_INTEGRATION.md` contract covering event
+  shape, sorting, validation issue codes, and producer rules.
 - `pnpm build`, `pnpm typecheck`, and `pnpm test` pass.
 
 ## Milestones
