@@ -39,13 +39,21 @@ defined once.
 ## MVP Scope
 
 - `AgentSession` and `AgentTurn` identifiers.
-- `AgentStreamEvent` discriminated union.
-- `AgentMessageEvent`, `AgentToolCallEvent`, `AgentExecEvent`, and terminal
-  lifecycle events.
-- `AgentApprovalRequest` / `AgentApprovalResponse`.
-- `AgentAttachment` and workspace file reference types.
+- `AgentSession`, `AgentTurn`, `AgentMessage`, `AgentToolCall`,
+  `TokenUsage`, `Attachment`, and `WorkspaceFileRef` data types.
+- `AgentStreamEvent` discriminated union keyed by `type`.
+- Message events: `user_message`, `assistant_message`, and `reasoning`.
+- Tool events: `function_call`, `tool_call`, and `tool_result`.
+- Exec events: `exec_begin` and `exec_end`.
+- Approval events: `approval_requested` and `approval_resolved`.
+- Reference events: `attachment` and `file_reference`.
+- Diagnostic/control events: `usage`, `status`, `error`, and `raw`.
+- Terminal lifecycle events: `turn_completed`, `turn_failed`, and
+  `turn_aborted`.
 - `TokenUsage` and model metadata.
-- Helper type guards for event narrowing.
+- Helper type guards for event narrowing:
+  `isTerminalTurnEvent`, `isMessageEvent`, `isToolEvent`,
+  `isApprovalEvent`, and `isExecEvent`.
 
 ## Public API Sketch
 
@@ -55,18 +63,62 @@ export type AgentStreamEvent =
   | TurnStartedEvent
   | UserMessageEvent
   | AssistantMessageEvent
+  | ReasoningEvent
+  | FunctionCallEvent
   | ToolCallEvent
   | ToolResultEvent
-  | ExecStartedEvent
-  | ExecFinishedEvent
+  | ExecBeginEvent
+  | ExecEndEvent
   | ApprovalRequestedEvent
   | ApprovalResolvedEvent
+  | AttachmentEvent
+  | FileReferenceEvent
+  | UsageEvent
+  | StatusEvent
+  | ErrorEvent
+  | RawEvent
   | TurnCompletedEvent
   | TurnFailedEvent
   | TurnAbortedEvent;
 
-export function isTerminalTurnEvent(event: AgentStreamEvent): boolean;
+export function isTerminalTurnEvent(event: AgentStreamEvent): event is TerminalTurnEvent;
+export function isMessageEvent(event: AgentStreamEvent): event is AgentMessageEvent;
+export function isToolEvent(event: AgentStreamEvent): event is AgentToolEvent;
+export function isApprovalEvent(event: AgentStreamEvent): event is AgentApprovalEvent;
+export function isExecEvent(event: AgentStreamEvent): event is AgentExecEvent;
 ```
+
+## Implemented Event Semantics
+
+Events use Unix epoch milliseconds in `at`. `sessionId`, `threadId`, `turnId`,
+and `seq` are optional on the base event so live transports can add ordering and
+storage context without changing each payload shape.
+
+Streaming assistant text should emit `assistant_message` with the current full
+`text`; producers may also include the incremental `delta`. Persisted history
+should emit the final `assistant_message` with `partial: false`.
+
+Generic functions use `function_call` plus `tool_result`. Non-function tools can
+use `tool_call` plus `tool_result`. Shell/process execution should use
+`exec_begin` and `exec_end` so renderers can present command-specific details
+without parsing generic tool arguments.
+
+Approval systems should emit `approval_requested` before the gated action and
+`approval_resolved` with `approved`, `rejected`, `expired`, or `cancelled`.
+
+`raw` exists only for forward compatibility and debugging. Stable consumers
+should prefer the canonical typed events above.
+
+## Fixtures
+
+The package includes fixtures for:
+
+- Persisted two-message turn.
+- Live streaming partial assistant message.
+- `run_command` exec begin/end.
+- Generic function call and result.
+- Approval request and resolution.
+- Failed turn.
 
 ## Acceptance Criteria
 
@@ -74,6 +126,7 @@ export function isTerminalTurnEvent(event: AgentStreamEvent): boolean;
 - The event union can model AgentWeb chat history and live streaming events.
 - Type tests prove common events narrow correctly.
 - Docs include one persisted-history example and one live-stream example.
+- `pnpm build`, `pnpm typecheck`, and `pnpm test` pass.
 
 ## Milestones
 
@@ -81,4 +134,3 @@ export function isTerminalTurnEvent(event: AgentStreamEvent): boolean;
 2. Back-port AgentWeb event examples as fixtures.
 3. Add type tests and generated API docs.
 4. Publish `0.1.0`.
-
