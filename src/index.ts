@@ -338,4 +338,168 @@ export function isExecEvent(event: AgentStreamEvent): event is AgentExecEvent {
   return event.type === 'exec_begin' || event.type === 'exec_end';
 }
 
+export type AgentStreamEventValidationIssueCode =
+  | 'missing_turn_started'
+  | 'event_before_turn_started'
+  | 'event_after_terminal_turn'
+  | 'duplicate_terminal_turn'
+  | 'duplicate_turn_started';
+
+export interface AgentStreamEventValidationIssue {
+  code: AgentStreamEventValidationIssueCode;
+  message: string;
+  index: number;
+  event: AgentStreamEvent;
+  turnId?: AgentTurnId;
+  firstIndex?: number;
+}
+
+export interface AgentStreamEventValidationResult {
+  ok: boolean;
+  issues: AgentStreamEventValidationIssue[];
+}
+
+function getEventTypeSortRank(event: AgentStreamEvent): number {
+  switch (event.type) {
+    case 'thread_started':
+      return 0;
+    case 'turn_started':
+      return 1;
+    case 'user_message':
+      return 2;
+    case 'assistant_message':
+    case 'reasoning':
+      return 3;
+    case 'function_call':
+    case 'tool_call':
+    case 'exec_begin':
+    case 'approval_requested':
+      return 4;
+    case 'tool_result':
+    case 'exec_end':
+    case 'approval_resolved':
+      return 5;
+    case 'attachment':
+    case 'file_reference':
+    case 'usage':
+    case 'status':
+    case 'error':
+    case 'raw':
+      return 6;
+    case 'turn_completed':
+    case 'turn_failed':
+    case 'turn_aborted':
+      return 7;
+  }
+}
+
+export function sortAgentStreamEvents(events: readonly AgentStreamEvent[]): AgentStreamEvent[] {
+  const useSequenceOrdering = events.every((event) => event.seq !== undefined);
+
+  return events
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => {
+      if (useSequenceOrdering && left.event.seq !== right.event.seq) {
+        return left.event.seq! - right.event.seq!;
+      }
+
+      if (left.event.at !== right.event.at) {
+        return left.event.at - right.event.at;
+      }
+
+      const rankDelta = getEventTypeSortRank(left.event) - getEventTypeSortRank(right.event);
+      if (rankDelta !== 0) {
+        return rankDelta;
+      }
+
+      return left.index - right.index;
+    })
+    .map(({ event }) => event);
+}
+
+export function validateAgentStreamEvents(
+  events: readonly AgentStreamEvent[],
+): AgentStreamEventValidationResult {
+  const issues: AgentStreamEventValidationIssue[] = [];
+  const turnStartedIndexes = new Map<AgentTurnId, number>();
+  const terminalIndexes = new Map<AgentTurnId, number>();
+
+  events.forEach((event, index) => {
+    if (event.type !== 'turn_started') {
+      return;
+    }
+
+    const startedIndex = turnStartedIndexes.get(event.turnId);
+    if (startedIndex !== undefined) {
+      issues.push({
+        code: 'duplicate_turn_started',
+        message: `Turn ${event.turnId} has more than one turn_started event.`,
+        index,
+        event,
+        turnId: event.turnId,
+        firstIndex: startedIndex,
+      });
+    } else {
+      turnStartedIndexes.set(event.turnId, index);
+    }
+  });
+
+  events.forEach((event, index) => {
+    if (event.turnId === undefined || event.type === 'turn_started') {
+      return;
+    }
+
+    const startedIndex = turnStartedIndexes.get(event.turnId);
+    const terminalIndex = terminalIndexes.get(event.turnId);
+
+    if (startedIndex === undefined) {
+      issues.push({
+        code: 'missing_turn_started',
+        message: `Turn ${event.turnId} has no turn_started event before its ${event.type} event.`,
+        index,
+        event,
+        turnId: event.turnId,
+      });
+    } else if (index < startedIndex) {
+      issues.push({
+        code: 'event_before_turn_started',
+        message: `Turn ${event.turnId} has a ${event.type} event before its turn_started event.`,
+        index,
+        event,
+        turnId: event.turnId,
+        firstIndex: startedIndex,
+      });
+    }
+
+    if (isTerminalTurnEvent(event)) {
+      if (terminalIndex !== undefined) {
+        issues.push({
+          code: 'duplicate_terminal_turn',
+          message: `Turn ${event.turnId} has more than one terminal turn event.`,
+          index,
+          event,
+          turnId: event.turnId,
+          firstIndex: terminalIndex,
+        });
+      } else {
+        terminalIndexes.set(event.turnId, index);
+      }
+    } else if (terminalIndex !== undefined) {
+      issues.push({
+        code: 'event_after_terminal_turn',
+        message: `Turn ${event.turnId} has a ${event.type} event after a terminal turn event.`,
+        index,
+        event,
+        turnId: event.turnId,
+        firstIndex: terminalIndex,
+      });
+    }
+  });
+
+  return {
+    ok: issues.length === 0,
+    issues,
+  };
+}
+
 export * from './fixtures.js';

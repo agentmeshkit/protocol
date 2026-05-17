@@ -12,10 +12,13 @@ import {
   liveStreamingPartialAssistantMessageFixture,
   persistedTwoMessageTurnFixture,
   runCommandExecFixture,
+  sortAgentStreamEvents,
+  validateAgentStreamEvents,
   type AgentApprovalEvent,
   type AgentExecEvent,
   type AgentMessageEvent,
   type AgentStreamEvent,
+  type AgentStreamEventValidationResult,
   type AgentToolEvent,
   type TerminalTurnEvent,
 } from '../src/index.js';
@@ -80,7 +83,220 @@ describe('AgentStreamEvent fixtures', () => {
   });
 });
 
+describe('event replay helpers', () => {
+  it('sorts complete sequence streams by seq before timestamps', () => {
+    const events: AgentStreamEvent[] = [
+      {
+        type: 'turn_completed',
+        turnId: 'turn_seq_1',
+        at: 1,
+        seq: 3,
+      },
+      {
+        type: 'turn_started',
+        turnId: 'turn_seq_1',
+        at: 3,
+        seq: 1,
+      },
+      {
+        type: 'assistant_message',
+        turnId: 'turn_seq_1',
+        messageId: 'message_assistant_1',
+        text: 'Done',
+        at: 2,
+        seq: 2,
+      },
+    ];
+
+    expect(sortAgentStreamEvents(events).map((event) => event.type)).toEqual([
+      'turn_started',
+      'assistant_message',
+      'turn_completed',
+    ]);
+  });
+
+  it('sorts sparse sequence streams by timestamp, lifecycle rank, and original order', () => {
+    const events: AgentStreamEvent[] = [
+      {
+        type: 'assistant_message',
+        turnId: 'turn_sort_1',
+        messageId: 'message_assistant_1',
+        text: 'Hello',
+        at: 3,
+      },
+      {
+        type: 'turn_completed',
+        turnId: 'turn_sort_1',
+        at: 4,
+        seq: 4,
+      },
+      {
+        type: 'user_message',
+        turnId: 'turn_sort_1',
+        messageId: 'message_user_1',
+        text: 'Hello',
+        at: 3,
+      },
+      {
+        type: 'turn_started',
+        turnId: 'turn_sort_1',
+        at: 2,
+        seq: 2,
+      },
+    ];
+
+    expect(sortAgentStreamEvents(events).map((event) => event.type)).toEqual([
+      'turn_started',
+      'user_message',
+      'assistant_message',
+      'turn_completed',
+    ]);
+    expect(events[0]!.type).toBe('assistant_message');
+  });
+
+  it('accepts exported fixtures as valid turn streams', () => {
+    for (const [name, events] of Object.entries(allFixtures)) {
+      expect(validateAgentStreamEvents(events), name).toEqual({
+        ok: true,
+        issues: [],
+      });
+    }
+  });
+
+  it('reports turn events without turn_started', () => {
+    const result = validateAgentStreamEvents([
+      {
+        type: 'assistant_message',
+        turnId: 'turn_missing_start',
+        messageId: 'message_1',
+        text: 'Missing start',
+        at: 1,
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toMatchObject([
+      {
+        code: 'missing_turn_started',
+        index: 0,
+        turnId: 'turn_missing_start',
+      },
+    ]);
+  });
+
+  it('reports events that appear before their turn_started event', () => {
+    const result = validateAgentStreamEvents([
+      {
+        type: 'user_message',
+        turnId: 'turn_out_of_order',
+        messageId: 'message_1',
+        text: 'Before start',
+        at: 1,
+      },
+      {
+        type: 'turn_started',
+        turnId: 'turn_out_of_order',
+        at: 2,
+      },
+    ]);
+
+    expect(result.issues).toMatchObject([
+      {
+        code: 'event_before_turn_started',
+        index: 0,
+        firstIndex: 1,
+      },
+    ]);
+  });
+
+  it('reports duplicate terminal events', () => {
+    const result = validateAgentStreamEvents([
+      {
+        type: 'turn_started',
+        turnId: 'turn_duplicate_terminal',
+        at: 1,
+      },
+      {
+        type: 'turn_completed',
+        turnId: 'turn_duplicate_terminal',
+        at: 2,
+      },
+      {
+        type: 'turn_failed',
+        turnId: 'turn_duplicate_terminal',
+        error: { message: 'already completed' },
+        at: 3,
+      },
+    ]);
+
+    expect(result.issues).toMatchObject([
+      {
+        code: 'duplicate_terminal_turn',
+        index: 2,
+        firstIndex: 1,
+      },
+    ]);
+  });
+
+  it('reports duplicate turn_started events', () => {
+    const result = validateAgentStreamEvents([
+      {
+        type: 'turn_started',
+        turnId: 'turn_duplicate_start',
+        at: 1,
+      },
+      {
+        type: 'turn_started',
+        turnId: 'turn_duplicate_start',
+        at: 2,
+      },
+    ]);
+
+    expect(result.issues).toMatchObject([
+      {
+        code: 'duplicate_turn_started',
+        index: 1,
+        firstIndex: 0,
+      },
+    ]);
+  });
+
+  it('reports non-terminal events after a terminal turn event', () => {
+    const result = validateAgentStreamEvents([
+      {
+        type: 'turn_started',
+        turnId: 'turn_after_terminal',
+        at: 1,
+      },
+      {
+        type: 'turn_completed',
+        turnId: 'turn_after_terminal',
+        at: 2,
+      },
+      {
+        type: 'usage',
+        turnId: 'turn_after_terminal',
+        usage: { inputTokens: 1, outputTokens: 1 },
+        at: 3,
+      },
+    ]);
+
+    expect(result.issues).toMatchObject([
+      {
+        code: 'event_after_terminal_turn',
+        index: 2,
+        firstIndex: 1,
+      },
+    ]);
+  });
+});
+
 describe('type guards', () => {
+  it('types validation results', () => {
+    const result = validateAgentStreamEvents(persistedTwoMessageTurnFixture);
+    expectTypeOf(result).toMatchTypeOf<AgentStreamEventValidationResult>();
+  });
+
   it('narrow terminal turn events', () => {
     const event: AgentStreamEvent = {
       type: 'turn_aborted',

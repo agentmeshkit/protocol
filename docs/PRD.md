@@ -54,6 +54,8 @@ defined once.
 - Helper type guards for event narrowing:
   `isTerminalTurnEvent`, `isMessageEvent`, `isToolEvent`,
   `isApprovalEvent`, and `isExecEvent`.
+- Lightweight replay helpers:
+  `sortAgentStreamEvents` and `validateAgentStreamEvents`.
 
 ## Public API Sketch
 
@@ -86,6 +88,11 @@ export function isMessageEvent(event: AgentStreamEvent): event is AgentMessageEv
 export function isToolEvent(event: AgentStreamEvent): event is AgentToolEvent;
 export function isApprovalEvent(event: AgentStreamEvent): event is AgentApprovalEvent;
 export function isExecEvent(event: AgentStreamEvent): event is AgentExecEvent;
+
+export function sortAgentStreamEvents(events: readonly AgentStreamEvent[]): AgentStreamEvent[];
+export function validateAgentStreamEvents(
+  events: readonly AgentStreamEvent[],
+): AgentStreamEventValidationResult;
 ```
 
 ## Implemented Event Semantics
@@ -109,6 +116,31 @@ Approval systems should emit `approval_requested` before the gated action and
 `raw` exists only for forward compatibility and debugging. Stable consumers
 should prefer the canonical typed events above.
 
+## Second-Round Implementation Notes
+
+The second round adds dependency-free replay helpers for packages that consume
+persisted or live event streams without taking a storage or UI dependency.
+
+`sortAgentStreamEvents` returns a new array. It prefers `seq` when every event
+has a sequence number, then falls back to `at` for sparse sequence streams. A
+small lifecycle rank keeps `thread_started` and `turn_started` before content
+and terminal turn events after turn activity. Original input order is the final
+tie-breaker, so sorting remains stable.
+
+`validateAgentStreamEvents` returns `{ ok, issues }` instead of throwing. It
+checks basic stream consistency:
+
+- Turn-scoped events without any `turn_started`.
+- Turn-scoped events that appear before their `turn_started`.
+- Non-terminal events after a terminal turn event.
+- Duplicate terminal turn events.
+- Duplicate `turn_started` events.
+
+This validation is intentionally shallow. It does not enforce provider-specific
+tool pairing, message aggregation rules, attachment storage, or complete turn
+closure, so streaming consumers can validate in-flight turns before a terminal
+event exists.
+
 ## Fixtures
 
 The package includes fixtures for:
@@ -126,6 +158,8 @@ The package includes fixtures for:
 - The event union can model AgentWeb chat history and live streaming events.
 - Type tests prove common events narrow correctly.
 - Docs include one persisted-history example and one live-stream example.
+- Docs include validation and replay usage.
+- Fixtures pass the lightweight event stream validator.
 - `pnpm build`, `pnpm typecheck`, and `pnpm test` pass.
 
 ## Milestones

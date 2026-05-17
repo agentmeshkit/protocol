@@ -110,6 +110,49 @@ function reduceTranscript(events: AgentStreamEvent[]) {
 }
 ```
 
+## Example: Validation And Replay
+
+```ts
+import {
+  sortAgentStreamEvents,
+  validateAgentStreamEvents,
+  type AgentStreamEvent,
+} from '@agentmeshkit/protocol';
+
+export function prepareReplay(input: AgentStreamEvent[]) {
+  const events = sortAgentStreamEvents(input);
+  const validation = validateAgentStreamEvents(events);
+
+  if (!validation.ok) {
+    return {
+      events,
+      ready: false,
+      issues: validation.issues.map((issue) => ({
+        code: issue.code,
+        index: issue.index,
+        turnId: issue.turnId,
+        message: issue.message,
+      })),
+    };
+  }
+
+  return {
+    events,
+    ready: true,
+    issues: [],
+  };
+}
+```
+
+`sortAgentStreamEvents` returns a new array and keeps replay ordering stable by
+using `seq` when every event provides it. Sparse sequence streams fall back to
+`at`, lifecycle rank, and original input order.
+
+`validateAgentStreamEvents` is intentionally lightweight. It checks basic turn
+stream consistency such as missing `turn_started`, events before
+`turn_started`, events after a terminal turn event, duplicate terminal events,
+and duplicate `turn_started`.
+
 ## Fixtures
 
 Fixtures are exported from the root package and from
@@ -122,7 +165,7 @@ Fixtures are exported from the root package and from
 - `approvalRequestFixture`
 - `failedTurnFixture`
 
-## Type Guards
+## Utilities
 
 ```ts
 import {
@@ -131,7 +174,11 @@ import {
   isMessageEvent,
   isTerminalTurnEvent,
   isToolEvent,
+  sortAgentStreamEvents,
+  validateAgentStreamEvents,
 } from '@agentmeshkit/protocol';
 ```
 
 Each guard narrows `AgentStreamEvent` to the matching exported event subtype.
+The sort and validation helpers are dependency-free utilities for stream
+consumers that need to validate persisted history before replaying it.
