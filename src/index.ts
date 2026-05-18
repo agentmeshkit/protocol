@@ -213,6 +213,55 @@ export interface ExecEndEvent extends AgentStreamEventBase {
   durationMs?: number;
 }
 
+export interface FileChangeEvent extends AgentStreamEventBase {
+  type: 'file_change';
+  turnId: AgentTurnId;
+  itemId: string;
+  path?: string;
+  status?: string;
+  diff?: string;
+  changes?: unknown;
+  partial?: boolean;
+}
+
+export interface WebSearchEvent extends AgentStreamEventBase {
+  type: 'web_search';
+  turnId: AgentTurnId;
+  itemId: string;
+  query?: string;
+  status?: string;
+  results?: unknown;
+  partial?: boolean;
+}
+
+export interface TodoListEvent extends AgentStreamEventBase {
+  type: 'todo_list';
+  turnId: AgentTurnId;
+  itemId: string;
+  todos?: unknown;
+  status?: string;
+  partial?: boolean;
+}
+
+export interface PlanUpdateEvent extends AgentStreamEventBase {
+  type: 'plan_update';
+  turnId: AgentTurnId;
+  itemId: string;
+  steps?: unknown;
+  status?: string;
+  partial?: boolean;
+}
+
+export interface ApprovalRequestEvent extends AgentStreamEventBase {
+  type: 'approval_request';
+  turnId: AgentTurnId;
+  approvalId: string;
+  approvalType: 'exec' | 'apply_patch' | 'unknown';
+  command?: string;
+  reason?: string;
+  status?: string;
+}
+
 export interface ApprovalRequestedEvent extends AgentStreamEventBase {
   type: 'approval_requested';
   turnId: AgentTurnId;
@@ -301,6 +350,11 @@ export type AgentStreamEvent =
   | UserMessageEvent
   | AssistantMessageEvent
   | ReasoningEvent
+  | FileChangeEvent
+  | WebSearchEvent
+  | TodoListEvent
+  | PlanUpdateEvent
+  | ApprovalRequestEvent
   | FunctionCallEvent
   | ToolCallEvent
   | ToolResultEvent
@@ -369,10 +423,15 @@ function getEventTypeSortRank(event: AgentStreamEvent): number {
       return 2;
     case 'assistant_message':
     case 'reasoning':
+    case 'file_change':
+    case 'web_search':
+    case 'todo_list':
+    case 'plan_update':
       return 3;
     case 'function_call':
     case 'tool_call':
     case 'exec_begin':
+    case 'approval_request':
     case 'approval_requested':
       return 4;
     case 'tool_result':
